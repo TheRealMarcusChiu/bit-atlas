@@ -25,6 +25,10 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const BASE = `http://127.0.0.1:${server.address().port}/bit-atlas/`;
 
+// Optional: node scripts/browser.mjs --shots=/tmp/dir  writes review screenshots.
+const SHOTS = process.argv.find((a) => a.startsWith('--shots='))?.slice(8);
+if (SHOTS) mkdirSync(SHOTS, { recursive: true });
+
 const browser = await chromium.launch();
 const errors = [];
 let passed = 0;
@@ -358,10 +362,37 @@ await check('no cyan/teal anywhere in computed colours (HTML + SVG, every view)'
   }
 });
 
-// Optional: node scripts/browser.mjs --shots=/tmp/dir  writes review screenshots.
-const SHOTS = process.argv.find((a) => a.startsWith('--shots='))?.slice(8);
+await check('phone 390x844 + 320x568: diagram stays in view while operating scrolled-to controls', async () => {
+  for (const vp of [{ width: 390, height: 844 }, { width: 320, height: 568 }]) {
+    for (const [q, ctl] of [['', B('op', 'read')], ['?view=bit&tech=flash&bits=4', B('op', 'program', '0000')], ['?view=topo', B('arr', 'read')],
+      ['?view=stack&stack=nand&n=16', B('stks', '12')], ['?view=vram', B('bus', 'step')], ['?view=bit&tech=dram&action=read&frame=1', B('anim', 'step')]]) {
+      const p = await open(BASE + q, { viewport: vp, hasTouch: true, isMobile: true });
+      const sel = `#controls ${ctl}`;
+      await p.evaluate((s) => document.querySelector(s).scrollIntoView({ block: 'end' }), sel); // user scrolled down to the control
+      const geo = () => p.evaluate((s) => {
+        const c = document.querySelector(s).getBoundingClientRect(); const d = document.querySelector('#diagram').getBoundingClientRect();
+        const inView = (r) => r.top >= -0.5 && r.bottom <= innerHeight + 0.5 && r.height > 0;
+        const hit = document.elementFromPoint(c.left + c.width / 2, c.top + c.height / 2);
+        return { scrolled: scrollY, ctl: inView(c), dia: inView(d), diaH: d.height, apart: c.top >= d.bottom || c.bottom <= d.top,
+          hit: !!hit && hit.closest(s) !== null };
+      }, sel);
+      const g = await geo();
+      const tag = `${vp.width}x${vp.height} ${q} ${ctl}`;
+      assert.ok(g.scrolled > 0 || vp.height > 800, `page scrolled ${tag}`);
+      assert.ok(g.ctl && g.dia && g.apart && g.hit, `${tag} ${JSON.stringify(g)}`);
+      assert.ok(g.diaH >= vp.height * 0.4, `diagram not shrunk too far ${tag} ${g.diaH}`);
+      const before = await p.innerHTML('#diagram');
+      await p.click(sel);
+      assert.notEqual(await p.innerHTML('#diagram'), before, `diagram responds ${tag}`);
+      assert.ok((await geo()).dia, `diagram still in view after click ${tag}`);
+      if (SHOTS && q === '') await p.screenshot({ path: `${SHOTS}/phone${vp.width}x${vp.height}-scrolled-read.png` });
+      if (SHOTS && q.includes('stack')) await p.screenshot({ path: `${SHOTS}/phone${vp.width}x${vp.height}-scrolled-stack.png` });
+      await p.context().close();
+    }
+  }
+});
+
 if (SHOTS) {
-  mkdirSync(SHOTS, { recursive: true });
   for (const [name, q, vp] of [['desktop-sram', '', { width: 1365, height: 900 }], ['desktop-flash-qlc', '?view=bit&tech=flash&bits=4', { width: 1365, height: 900 }],
     ['desktop-where', '?view=where&place=ssd-nand', { width: 1365, height: 900 }], ['desktop-stack', '?view=stack&stack=hbm&n=8&layer=3&exploded=1', { width: 1365, height: 900 }],
     ['tablet-topo', '?view=topo&cell=4&action=read&frame=3', { width: 820, height: 1180 }],

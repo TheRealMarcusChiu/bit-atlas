@@ -186,10 +186,17 @@ svg text { font-family: var(--sans); fill: var(--text); }
   main { grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; padding: 4px 16px 28px; }
   header { padding: 14px 16px 10px; }
 }
+/* Single column: the figure stays pinned (compact, solid) so controls scroll beneath it and every action is seen. */
 @media (max-width: 860px) {
   main { grid-template-columns: 1fr; }
-  #stage { position: static; }
-  #diagram { max-height: 62vh; }
+  #stage { min-width: 0; top: 0; z-index: 2; margin: 0 -16px; padding: 8px 16px 6px; background: var(--ink); border-bottom: 1px solid var(--rule); }
+  #diagram { max-height: 46vh; max-height: 46svh; }
+  #caption { margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #panel { padding-top: 4px; }
+  #panel * { scroll-margin-top: calc(46svh + 60px); } /* focused/scrolled-to controls never land under the pinned figure */
+}
+@media (max-width: 860px) and (max-height: 480px) {
+  #stage { position: static; } /* landscape phones: no room to pin, fall back to normal flow */
 }
 @media (max-width: 560px) {
   header { gap: 10px; padding: 12px 12px 8px; }
@@ -197,6 +204,7 @@ svg text { font-family: var(--sans); fill: var(--text); }
   nav { width: 100%; }
   nav .b { flex: 1 1 auto; padding: 10px 12px; border-color: var(--rule); }
   main { padding: 4px 12px 24px; }
+  #stage { margin: 0 -12px; padding: 6px 12px 4px; }
   #diagram { border-radius: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {

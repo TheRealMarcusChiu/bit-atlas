@@ -39,7 +39,8 @@ desktop ≥ 980
 │                                                      │ [Copy link] note     │ │
 │                                                      │ ▸ Details ▸ Sources  │ │
 └────────────────────────────────────────────────────────────────────────────────┘
-phone: header + wrapping nav → plate (≤ 62vh) → caption → readout → controls → share → details
+phone: header + wrapping nav → plate (≤ 46svh, pinned on scroll, solid ground) → caption → readout → controls → share → details
+       landscape (height ≤ 480): plate unpinned, normal flow
 ```
 
 Left-aligned throughout; diagram text centred only where the SVG already centres it.
