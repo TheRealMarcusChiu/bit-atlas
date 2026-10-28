@@ -1,0 +1,12 @@
+{
+  "name": "bit-atlas",
+  "version": "1.0.0",
+  "description": "Interactive diagrams: how SRAM, DRAM and flash store 1 vs 0, and where they live.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.mjs"
+  }
+}
