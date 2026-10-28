@@ -237,8 +237,8 @@ const ln = (x1, y1, x2, y2, cls = 'wire', a = '') => `<line x1="${x1}" y1="${y1}
 const rc = (x, y, w, h, cls, a = '') => `<rect x="${x}" y="${y}" width="${w}" height="${h}" class="${cls}" ${a}/>`;
 const arrow = (x1, y1, x2, y2, cls = 'arw') => ln(x1, y1, x2, y2, cls, `marker-end="url(#${cls === 'arw-a' ? 'ma' : 'mc'})"`);
 const DEFS = `<defs>
-<marker id="mc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--cyan)"/></marker>
-<marker id="ma" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--amber)"/></marker>
+<marker id="mc" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--sig)"/></marker>
+<marker id="ma" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--charge)"/></marker>
 <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="var(--dim)" stroke-width="2"/></pattern>
 </defs>`;
 // Simplified n-FET: channel between x1..x2 at y, gate bar above, gate stem up to gy.
@@ -330,7 +330,7 @@ function svgFlash() {
   s += tx(145, 262, 'channel', 'lbl dim small', 'text-anchor="middle"');
   if (has('up')) for (const x of [100, 145, 190]) s += arrow(x, 236, x, 190, 'arw-a');
   if (has('down')) for (const x of [100, 145, 190]) s += arrow(x, 176, x, 244, 'arw-a');
-  s += tx(20, 298, 'storage: floating gate', 'lbl dim small') + tx(20, 316, 'or charge trap · e⁻ = amber', 'lbl dim small');
+  s += tx(20, 298, 'storage: floating gate', 'lbl dim small') + tx(20, 316, 'or charge trap · e⁻ = violet', 'lbl dim small');
   // Vt ladder
   const y0 = 430; const H = 380; const h = H / n;
   s += arrow(296, y0, 296, 30) + tx(304, 34, 'Vt', 'lbl mono');
@@ -496,7 +496,7 @@ function svgStack() {
     s += nop(o) + tx(165, top - 20, 'channel', 'lbl on small', 'text-anchor="middle"');
     s += tx(296, top - 8, 'bit line', 'lbl dim small') + tx(296, 395, 'source', 'lbl dim small');
     s += arrow(330, mid(sel), 296, mid(sel)) + tx(336, mid(sel) + 5, `WL ${sel + 1}`, 'lbl on mono');
-    s += tx(36, 418, 'amber = charge-trap layer', 'lbl amber small');
+    s += tx(36, 418, 'violet = charge-trap layer', 'lbl amber small');
   } else if (st.type === 'hbm') {
     head = 'HBM · stacked DRAM dies'; foot = 'dies = separate DRAM chips';
     s += rc(20, 380, 380, 18, 'interp') + rc(10, 398, 400, 12, 'board');
@@ -560,17 +560,17 @@ function controlsBit() {
       ? act1('op', 'program', 'Program 0', { arg: '0' }) + act1('op', 'program', 'Write 1', { arg: '1' })
       : Array.from({ length: levelsFor(c.bits) }, (_, i) => act1('op', 'program', bitsAt(i, c.bits), { arg: bitsAt(i, c.bits), cls: 'mono sq' })).join('');
     h += row(c.bits === 1 ? 'Write' : 'Program', progs);
-    h += row('Do', act1('op', 'erase', c.topo === 'nand' ? 'Erase block' : 'Erase sector') + act1('op', 'read', 'Read')
+    h += row('Actions', act1('op', 'erase', c.topo === 'nand' ? 'Erase block' : 'Erase sector') + act1('op', 'read', 'Read')
       + btn('op', 'power', c.powered ? 'Power off' : 'Power on', { on: !c.powered }));
   } else {
     h += row('Write', act1('op', 'write', 'Write 0', { arg: 0 }) + act1('op', 'write', 'Write 1', { arg: 1 }));
-    h += row('Do', act1('op', 'read', 'Read') + (t === 'dram' ? act1('op', 'refresh', 'Refresh') : '')
+    h += row('Actions', act1('op', 'read', 'Read') + (t === 'dram' ? act1('op', 'refresh', 'Refresh') : '')
       + btn('op', 'power', c.powered ? 'Power off' : 'Power on', { on: !c.powered }));
     if (t === 'dram') h += animRow('leak', leakClock);
   }
   if (S.frames && S.frames.length > 1) h += animRow('anim', opClock);
   const go = t === 'sram' ? ['cache', 'Stacked SRAM cache →'] : t === 'dram' ? ['hbm', 'Stacked DRAM (HBM) →'] : c.topo === 'nand' ? ['nand', '3D NAND layers →'] : null;
-  if (go) h += row('Go', act1('go3d', go[0], go[1]));
+  if (go) h += row('Related', act1('go3d', go[0], go[1]));
   return h;
 }
 
@@ -584,7 +584,7 @@ function controlsWhere() {
   h += `<div class="card"><svg viewBox="0 0 120 70" class="mini" aria-hidden="true">${mini(p.tech)}</svg><div>
     <p class="k">Role</p><p>${p.role}</p><p class="k">Cell</p><p class="on">${techName(p)}</p></div></div>`;
   const g = W3D[S.place];
-  h += row('Go', act1('open', 'x', 'Open bit cell →') + (g ? act1('go3d', g[0], g[2], { arg: g[1] }) : ''));
+  h += row('Related', act1('open', 'x', 'Open bit cell →') + (g ? act1('go3d', g[0], g[2], { arg: g[1] }) : ''));
   return h;
 }
 // Only where a 3D example applies; wording stays conditional.
@@ -600,13 +600,13 @@ function mini(t) {
 
 function controlsTopo() {
   let h = row('Cell', S.bits.map((b, i) => btn('sel', i, String(i), { on: S.sel === i, cls: 'mono sq' })).join(''));
-  h += row('Do', act1('arr', 'read', 'Read') + act1('arr', 'program', 'Program 0') + act1('arr', 'program1', 'Write 1') + act1('arr', 'erase', 'Erase all'));
+  h += row('Actions', act1('arr', 'read', 'Read') + act1('arr', 'program', 'Program 0') + act1('arr', 'program1', 'Write 1') + act1('arr', 'erase', 'Erase all'));
   if (S.frames && S.frames.length > 1) h += animRow('anim', opClock);
-  return h + row('Go', act1('go3d', 'nand', '3D NAND string →'));
+  return h + row('Related', act1('go3d', 'nand', '3D NAND string →'));
 }
 function controlsVram() {
   return row('Type', btn('vram', 'gddr', 'GDDR', { on: S.vram === 'gddr' }) + btn('vram', 'hbm', 'HBM', { on: S.vram === 'hbm' }))
-    + animRow('bus', busClock) + row('Go', act1('view', 'bit', 'DRAM cell →', { arg: 'dram' })
+    + animRow('bus', busClock) + row('Related',act1('view', 'bit', 'DRAM cell →', { arg: 'dram' })
     + (S.vram === 'hbm' ? act1('go3d', 'hbm', 'Explore the stack →') : ''));
 }
 
@@ -626,7 +626,7 @@ function controlsStack() {
     cache: act1('jump', 'sram', 'SRAM cell →') + act1('jump', 'l3', 'Where it lives →'),
     pkg: st.pkg === 'nand' ? act1('stk', 'nand', 'Inside a die: 3D NAND →') : act1('jump', 'dram', 'DRAM cell →'),
   }[st.type];
-  return h + row('Go', go);
+  return h + row('Related', go);
 }
 
 const NOTES = {
@@ -690,6 +690,7 @@ function render() {
   svg.setAttribute('viewBox', d.vb);
   svg.innerHTML = `<title>${d.title}</title>${d.s}`;
   svg.setAttribute('aria-label', d.title);
+  $('#caption').textContent = d.title;
   svg.classList.toggle('bad', S.bad);
   $('#status').classList.toggle('bad', S.bad);
   document.querySelectorAll('nav [data-a="view"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === S.view)));

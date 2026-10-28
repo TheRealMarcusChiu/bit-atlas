@@ -6,12 +6,13 @@
 <title>Bit Atlas — how memory stores 1 vs 0</title>
 <meta name="description" content="Interactive schematics: SRAM, DRAM and flash cells storing 1 vs 0, where each lives, NAND vs NOR, GDDR vs HBM, 3D stacking (3D NAND, HBM, stacked SRAM cache, die packages). Shareable links to any state.">
 <meta name="color-scheme" content="dark">
+<link rel="preload" href="fonts/commissioner-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/style.css">
 <script type="module" src="src/app.js"></script>
 </head>
 <body>
 <header>
-  <h1>Bit<span>Atlas</span></h1>
+  <h1>Bit Atlas <span>how memory stores 1 vs 0</span></h1>
   <nav aria-label="View">
     <button type="button" class="b" data-a="view" data-v="bit" aria-pressed="true">Bit cell</button>
     <button type="button" class="b" data-a="view" data-v="where" aria-pressed="false">Where it lives</button>
@@ -23,18 +24,21 @@
 <main>
   <figure id="stage">
     <svg id="diagram" role="img" viewBox="0 0 420 460" preserveAspectRatio="xMidYMid meet"></svg>
+    <figcaption id="caption"></figcaption>
   </figure>
   <section id="panel" aria-label="Controls">
-    <p id="status" role="status" aria-live="polite"></p>
+    <div class="readout">
+      <p id="status" role="status" aria-live="polite"></p>
+      <p id="phase"></p>
+    </div>
     <p id="notice" role="alert" hidden></p>
-    <p id="phase"></p>
     <div id="controls"></div>
     <div class="share">
       <button type="button" class="b" id="copy">Copy link</button>
       <span id="copied" class="note" role="status"></span>
     </div>
     <input id="share" type="text" readonly hidden aria-label="Link to this exact state">
-    <p class="note">The link opens the same simulation state, paused. Diagram size and layout follow each screen.</p>
+    <p class="note">Opens this exact state, paused.</p>
     <details>
       <summary>Details</summary>
       <ul id="notes"></ul>

@@ -2,6 +2,7 @@
 // Not part of `npm test` (needs a Playwright install). Run: PLAYWRIGHT=/path/to/node_modules/playwright node scripts/browser.mjs
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -10,7 +11,7 @@ const pwPath = process.env.PLAYWRIGHT || '/root/projects/bandwidth-compare/node_
 const pw = await import(pwPath.endsWith('.js') ? pwPath : join(pwPath, 'index.js'));
 const { chromium } = pw.default ?? pw;
 
-const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' };
+const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2' };
 const server = createServer(async (req, res) => {
   const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   if (!path.startsWith('/bit-atlas/')) { res.writeHead(404).end(); return; }
@@ -276,6 +277,101 @@ await check('reduced motion: preset still opens on requested frame', async () =>
   assert.match((await shot(p)).phase, /^2\/4/);
   await p.context().close();
 });
+
+const tryClick = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel); // no 30s wait when absent
+const STATES = ['', '?view=bit&tech=dram', '?view=bit&tech=flash&bits=4', '?view=bit&tech=flash&topo=nor', '?view=where', '?view=topo',
+  '?view=vram&vram=hbm', '?view=stack&stack=nand&n=16', '?view=stack&stack=hbm&n=8', '?view=stack&stack=pkg&pkg=pop', '?view=stack&stack=cache&n=2'];
+await check('layout 1365/768/390/320: targets ≥44, button gaps ≥12, group gaps ≥16, nav gaps ≥8, nothing clipped', async () => {
+  for (const width of [1365, 768, 390, 320]) {
+    for (const q of STATES) {
+      const p = await open(BASE + q, { viewport: { width, height: 900 } });
+      await tryClick(p, B('op', 'read')); // also measure the Steps row where one exists
+      const r = await p.evaluate(() => {
+        const vw = document.documentElement.clientWidth; const bad = [];
+        for (const e of document.querySelectorAll('button, summary, input, select')) {
+          const b = e.getBoundingClientRect(); if (!b.width) continue;
+          if (b.height < 44 || b.width < 44) bad.push(`small "${e.textContent}" ${b.width}x${b.height}`);
+          if (b.left < 0 || b.right > vw) bad.push(`clipped "${e.textContent}"`);
+        }
+        // Separation of two boxes = the larger axis gap; negative means they overlap/touch.
+        const gaps = (sel, min) => document.querySelectorAll(sel).forEach((c) => {
+          const k = [...c.children].map((e) => e.getBoundingClientRect()).filter((b) => b.width);
+          for (let i = 0; i < k.length; i++) for (let j = i + 1; j < k.length; j++) {
+            const [a, b] = [k[i], k[j]];
+            const d = Math.max(b.left - a.right, a.left - b.right, b.top - a.bottom, a.top - b.bottom);
+            if (d < min - 0.5) bad.push(`${sel} gap ${d.toFixed(1)} < ${min}`);
+          }
+        });
+        gaps('.btns', 12); gaps('#controls', 16); gaps('nav', 8);
+        return { over: document.documentElement.scrollWidth - vw, bad };
+      });
+      assert.equal(r.over, 0, `overflow ${width} ${q}`);
+      assert.deepEqual(r.bad, [], `${width} ${q}`);
+      await p.context().close();
+    }
+  }
+});
+
+await check('keyboard focus ring visible on nav and controls', async () => {
+  const p = await open(BASE);
+  const ring = () => p.evaluate(() => { const e = document.activeElement; const s = getComputedStyle(e);
+    return { where: e.closest('nav, #controls')?.tagName, w: parseFloat(s.outlineWidth), st: s.outlineStyle }; });
+  await p.keyboard.press('Tab');
+  let o = await ring();
+  assert.equal(o.where, 'NAV', 'first Tab lands in view nav');
+  assert.ok(o.st !== 'none' && o.w >= 2, `nav outline ${o.st} ${o.w}`);
+  await p.focus(`#controls ${B('tech', 'dram')}`);
+  await p.keyboard.press('Tab');
+  o = await ring();
+  assert.equal(o.where, 'DIV', 'Tab moves within controls');
+  assert.ok(o.st !== 'none' && o.w >= 2, `control outline ${o.st} ${o.w}`);
+  await p.context().close();
+});
+
+await check('phone layout copy → desktop reopen: identical snapshot', async () => {
+  const p = await open(BASE, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  for (const s of [B('view', 'stack'), B('stk', 'hbm'), B('stkn', '8'), B('stks', '4'), B('stkx', '1')]) await click(p, s);
+  await reopen(await copy(p));
+  await p.context().close();
+});
+
+await check('no cyan/teal anywhere in computed colours (HTML + SVG, every view)', async () => {
+  for (const q of STATES) {
+    const p = await open(BASE + q);
+    for (const s of [B('op', 'read'), B('arr', 'read'), B('bus', 'step')]) await tryClick(p, s);
+    const hits = await p.evaluate(() => {
+      const out = [];
+      for (const e of document.querySelectorAll('*')) {
+        const s = getComputedStyle(e);
+        for (const prop of ['color', 'backgroundColor', 'borderTopColor', 'outlineColor', 'fill', 'stroke']) {
+          const m = s[prop].match(/rgba?\(([\d.]+),? ([\d.]+),? ([\d.]+)/); if (!m) continue;
+          const [r, g, b] = m.slice(1, 4).map((x) => x / 255); const mx = Math.max(r, g, b); const mn = Math.min(r, g, b);
+          if (mx - mn < 0.25) continue; // near-neutral
+          const h = mx === r ? 60 * (((g - b) / (mx - mn)) % 6) : mx === g ? 60 * ((b - r) / (mx - mn) + 2) : 60 * ((r - g) / (mx - mn) + 4);
+          if (h >= 160 && h <= 220) out.push(`${e.tagName}.${e.getAttribute('class')} ${prop} ${s[prop]}`);
+        }
+      }
+      return out;
+    });
+    assert.deepEqual(hits, [], q);
+    await p.context().close();
+  }
+});
+
+// Optional: node scripts/browser.mjs --shots=/tmp/dir  writes review screenshots.
+const SHOTS = process.argv.find((a) => a.startsWith('--shots='))?.slice(8);
+if (SHOTS) {
+  mkdirSync(SHOTS, { recursive: true });
+  for (const [name, q, vp] of [['desktop-sram', '', { width: 1365, height: 900 }], ['desktop-flash-qlc', '?view=bit&tech=flash&bits=4', { width: 1365, height: 900 }],
+    ['desktop-where', '?view=where&place=ssd-nand', { width: 1365, height: 900 }], ['desktop-stack', '?view=stack&stack=hbm&n=8&layer=3&exploded=1', { width: 1365, height: 900 }],
+    ['tablet-topo', '?view=topo&cell=4&action=read&frame=3', { width: 820, height: 1180 }],
+    ['phone-sram', '', { width: 390, height: 844 }], ['phone-vram', '?view=vram&vram=hbm', { width: 390, height: 844 }], ['phone320-flash', '?view=bit&tech=flash&bits=4', { width: 320, height: 700 }]]) {
+    const p = await open(BASE + q, { viewport: vp });
+    await p.evaluate(() => document.fonts.ready);
+    await p.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: name.startsWith('phone') });
+    await p.context().close();
+  }
+}
 
 await check('no console errors', async () => { assert.deepEqual(errors, []); });
 

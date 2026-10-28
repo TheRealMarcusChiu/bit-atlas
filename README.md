@@ -8,7 +8,7 @@ Interactive schematics of **how memory cells store 1 vs 0** — and where each l
 - **GDDR vs HBM** — both DRAM as GPU memory; flat packages vs stacked dies with TSVs
 - **3D stacking** — 3D NAND (word-line layers inside one die) · HBM (separate DRAM dies + base die, TSVs, interposer) · 3D SRAM cache (cache die bonded to a compute die) · package stacking (NAND or DRAM dies in one package, PoP). Pick layer/die count, select a layer/die, compact vs exploded.
 
-Plain HTML/CSS/ES modules. No build, no dependencies. Teaching schematics, not a circuit simulator; no universal timing, size or voltage numbers. Layer and die counts are illustrative choices, not product counts; no bandwidth/density formula is implied.
+Plain HTML/CSS/ES modules. No build, no dependencies. Fonts: Commissioner and Azeret Mono (SIL OFL 1.1), self-hosted in `fonts/` so the page makes no third-party requests. Design tokens and rules: `docs/design.md`. Teaching schematics, not a circuit simulator; no universal timing, size or voltage numbers. Layer and die counts are illustrative choices, not product counts; no bandwidth/density formula is implied.
 
 ## Share links
 
@@ -44,7 +44,8 @@ Open via any static server (ES modules need http), e.g. `python3 -m http.server`
 npm test       # model + stacking invariants + URL codec (roundtrips, malformed/injection, presets, precedence)
 npm run check  # syntax, local refs, no external runtime assets, min text size, nav per view
 PLAYWRIGHT=/path/to/node_modules/playwright node scripts/browser.mjs
-               # real-browser: copy → reopen in new context → identical & still paused, history, keyboard, 390px overflow
+               # real-browser: copy → reopen in new context → identical & still paused, history, keyboard, 390px overflow,
+               # tap targets + spacing at 1365/768/390/320, focus rings, no cyan. Add --shots=/tmp/dir for screenshots.
 ```
 
 Sources are listed in the page's **Sources** disclosure. MIT licensed.
