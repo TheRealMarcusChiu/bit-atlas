@@ -41,6 +41,7 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; pa
 #phase { margin: 0; min-height: 22px; font: 14px var(--mono); color: var(--amber); }
 .row { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 8px; }
 .rl { font: 13px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+.note { font-size: 14px; color: var(--dim); }
 .btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .card { display: flex; gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .card p { margin: 0; }

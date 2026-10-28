@@ -1,5 +1,5 @@
 import {
-  makeCell, act, FULL, SENSE, levelsFor, bitsAt, PLACES, techOf, readPath, createClock,
+  makeCell, act, errText, FULL, SENSE, levelsFor, bitsAt, PLACES, techOf, readPath, createClock,
 } from './model.js';
 
 const $ = (s) => document.querySelector(s);
@@ -104,14 +104,13 @@ const FRAMES = {
   },
 };
 
-const ERR = { 'erase-first': 'Blocked: 0→1 needs erase first', off: 'Power is off', 'n/a': 'Not needed here' };
 
 /* ---------- actions ---------- */
 function cellOp(op, arg) {
   const tech = S.tech; const before = S.cells[tech];
   const r = act(before, op, arg);
   S.bad = !!r.error;
-  if (r.error) { clearFrames(); S.msg = ERR[r.error]; return; }
+  if (r.error) { clearFrames(); S.msg = errText(r.error, before); return; }
   S.cells[tech] = r.cell;
   const c = r.cell;
   if (op === 'power') {
@@ -179,7 +178,7 @@ const ACTIONS = {
       S.msg = `Cell ${i} reads ${S.bits[i]} in both · different paths`;
     }
     if (v === 'program') { S.bits = S.bits.map((b, j) => (j === i ? 0 : b)); S.msg = `Cell ${i} programmed → 0`; }
-    if (v === 'program1') { if (S.bits[i] === 0) { S.bad = true; S.msg = ERR['erase-first']; } else S.msg = `Cell ${i} already 1`; }
+    if (v === 'program1') { if (S.bits[i] === 0) { S.bad = true; S.msg = errText('erase-first'); } else S.msg = `Cell ${i} already 1`; }
     if (v === 'erase') { S.bits = S.bits.map(() => 1); S.msg = 'Erased block / sector → all 1'; }
   },
   vram: (v) => { stopAll(); S.vram = v; S.pulse = 0; S.msg = v === 'gddr' ? 'GDDR: flat packages on the board' : 'HBM: stacked DRAM beside the GPU'; },
@@ -455,7 +454,9 @@ function controlsBit() {
   let h = row('Cell', ['sram', 'dram', 'flash'].map((k) => btn('tech', k, k === 'flash' ? 'Flash' : k.toUpperCase(), { on: t === k })).join(''));
   if (t === 'flash') {
     h += row('Type', btn('topo', 'nand', 'NAND', { on: c.topo === 'nand' }) + btn('topo', 'nor', 'NOR', { on: c.topo === 'nor' }));
-    h += row('Bits/cell', [['1', 'SLC'], ['2', 'MLC'], ['3', 'TLC'], ['4', 'QLC']].map(([b, l]) => btn('levels', b, l, { on: c.bits === Number(b) })).join(''));
+    h += c.topo === 'nand'
+      ? row('Bits/cell', [['1', 'SLC'], ['2', 'MLC'], ['3', 'TLC'], ['4', 'QLC']].map(([b, l]) => btn('levels', b, l, { on: c.bits === Number(b) })).join(''))
+      : row('Bits/cell', '<span class="note">SLC · this NOR view models common SLC</span>');
     const progs = c.bits === 1
       ? act1('op', 'program', 'Program 0', { arg: '0' }) + act1('op', 'program', 'Write 1', { arg: '1' })
       : Array.from({ length: levelsFor(c.bits) }, (_, i) => act1('op', 'program', bitsAt(i, c.bits), { arg: bitsAt(i, c.bits), cls: 'mono sq' })).join('');
@@ -505,7 +506,7 @@ const NOTES = {
   bit: () => ({
     sram: ['Typical 6T shown; 8T and other variants exist.', 'Two inverters drive each other: Q and Q̄ stay opposite while powered.', 'No refresh needed. Power loss → contents undefined.'],
     dram: ['Simplified 1T1C. Charged = 1 is this diagram\'s convention; real arrays may invert per bitline.', 'Reading a row shares cell charge with the bitlines (destructive); sense amps resolve it and restore the row. Software data is not lost by reading.', 'Charge leaks; periodic refresh rewrites it. Retention time varies; no numbers implied.'],
-    flash: ['Simplified SLC threshold model. Erased = low Vt = 1; programmed = high Vt = 0. Both hold some charge.', 'Storage layer: floating gate (conductor) or charge trap (insulator) — different physics, same Vt idea.', 'Program raises Vt only. Erase works on a whole block (NAND) or sector (NOR) — the single-cell erase here stands in for that.', 'MLC/TLC/QLC: 4/8/16 Vt windows for 2/3/4 bits. Bit labels here are illustrative, not a real code.'],
+    flash: ['Simplified SLC threshold model. Erased = low Vt = 1; programmed = high Vt = 0. Both hold some charge.', 'Storage layer: floating gate (conductor) or charge trap (insulator) — different physics, same Vt idea.', 'Program raises Vt only. Erase works on a whole block (NAND) or sector (NOR) — the single-cell erase here stands in for that.', 'NAND MLC/TLC/QLC: 4/8/16 Vt windows for 2/3/4 bits. Bit labels here are illustrative, not a real code.'],
   })[S.tech],
   where: () => ['Cache levels are positions in a hierarchy, not cell species. Typical caches use SRAM.', 'L0 and extra LLC are architecture-specific (dashed). Not every chip has L0–L3; L0 names different things (e.g. NVIDIA Turing: L0 instruction cache, separate from registers).', 'GPU L1 often shares SRAM with scratchpad ("shared memory"). Generic map, not one product.', 'SSD = NAND + controller (ECC, wear leveling, bad blocks). Onboard DRAM optional: DRAM-less designs exist, some using host memory (HMB).', 'NOR usually holds firmware, not bulk SSD data.', 'Sizes and latencies vary; none implied.'],
   topo: () => ['Same trapped-charge cell, different wiring.', 'NAND: cells in series; unselected ones get a pass voltage, so one read current crosses the whole string. Dense; reads/programs by page, erases by block.', 'NOR: cells in parallel on the bitline; random byte/word reads, execute-in-place. Larger per bit; erases by sector.', 'Cell wiring ≠ external bus: "serial NOR" is an interface. SSDs still serve random reads via the controller.', 'Neither replaces SRAM caches: flash writes slowly and wears out.'],

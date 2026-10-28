@@ -11,7 +11,13 @@ export const levelOf = (label, bits) => levelsFor(bits) - 1 - parseInt(label, 2)
 export function makeCell(kind, { bits = 1, topo = 'nand' } = {}) {
   if (kind === 'sram') return { kind, powered: true, q: 0 };
   if (kind === 'dram') return { kind, powered: true, charge: 0, lost: false };
-  return { kind: 'flash', topo, bits, level: 0, powered: true };
+  // The NOR view models common SLC NOR only; multi-level ladder is NAND-only.
+  return { kind: 'flash', topo, bits: topo === 'nor' ? 1 : bits, level: 0, powered: true };
+}
+
+export function errText(error, cell) {
+  if (error === 'erase-first') return cell && cell.bits > 1 ? 'Blocked: lower Vt needs erase first' : 'Blocked: 0→1 needs erase first';
+  return { off: 'Power is off', 'n/a': 'Not needed here' }[error];
 }
 
 const ok = (cell, extra) => ({ cell, ...extra });

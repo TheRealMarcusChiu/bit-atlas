@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   makeCell, act, FULL, SENSE, levelsFor, bitsAt, levelOf,
-  PLACES, techOf, readPath, createClock, makeArray, arrayAct,
+  PLACES, techOf, readPath, createClock, makeArray, arrayAct, errText,
 } from '../src/model.js';
 
 const run = (cell, ...ops) => ops.reduce((c, [op, arg]) => act(c, op, arg).cell, cell);
@@ -97,6 +97,20 @@ test('Multi-level: 2/3/4 bits ⇒ 4/8/16 windows, unique labels, Vt only rises',
   assert.equal(c.level, 5);
   assert.equal(act(c, 'program', bitsAt(2, 3)).error, 'erase-first');
   assert.equal(act(c, 'program', bitsAt(7, 3)).cell.level, 7);
+});
+
+test('Multi-level is NAND-only: NOR forces SLC', () => {
+  assert.equal(makeCell('flash', { bits: 3, topo: 'nor' }).bits, 1);
+  assert.equal(makeCell('flash', { bits: 4, topo: 'nand' }).bits, 4);
+});
+
+test('Erase-first message: SLC says 0→1, multi-level says lower Vt', () => {
+  const slc = run(makeCell('flash'), ['program', '0']);
+  assert.equal(errText(act(slc, 'program', '1').error, slc), 'Blocked: 0→1 needs erase first');
+  const tlc = run(makeCell('flash', { bits: 3 }), ['program', bitsAt(5, 3)]);
+  const msg = errText(act(tlc, 'program', bitsAt(2, 3)).error, tlc);
+  assert.equal(msg, 'Blocked: lower Vt needs erase first');
+  assert.ok(!msg.includes('0→1'));
 });
 
 test('Place map: role vs cell technology', () => {
