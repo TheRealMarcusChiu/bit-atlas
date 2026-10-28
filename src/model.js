@@ -99,6 +99,35 @@ export function arrayAct(a, op, i) {
   return { arr: a };
 }
 
+// 3D stacking. Counts are illustrative choices, not product layer/die counts.
+// unit: 'layer' = word-line layer inside one die · 'die' = separate chip · 'package' = separate package.
+export const STACK_TYPES = ['nand', 'hbm', 'cache', 'pkg'];
+export const PKG_KINDS = ['nand', 'dram', 'pop'];
+export const STACK_COUNTS = { nand: [4, 8, 16], hbm: [2, 4, 8], cache: [1, 2], pkg: [2, 4, 8] };
+const STACK_N = { nand: 8, hbm: 4, cache: 1, pkg: 4 };
+export const makeStack = (type = 'nand', pkg = 'nand') => ({ type, n: STACK_N[type], sel: 0, x: false, pkg });
+
+const times = (n, f) => Array.from({ length: n }, (_, i) => f(i + 1));
+export function stackParts({ type, n, pkg }) {
+  if (type === 'nand') return times(n, (i) => ({ unit: 'layer', kind: 'wl', tech: 'flash', label: `Word line ${i}`, fn: `Gate plate: cell ${i} of ${n} on every vertical channel` }));
+  if (type === 'hbm') return [{ unit: 'die', kind: 'base', tech: null, label: 'Base die', fn: 'Logic / interface die under the DRAM (optional in some stacks)' },
+    ...times(n, (i) => ({ unit: 'die', kind: 'dram', tech: 'dram', label: `DRAM die ${i}`, fn: 'A whole DRAM chip: 1T1C cells, refresh, volatile; TSVs pass through' }))];
+  if (type === 'cache') return [{ unit: 'die', kind: 'compute', tech: null, label: 'Compute die', fn: 'Cores plus their on-die caches' },
+    ...times(n, (i) => ({ unit: 'die', kind: 'sram', tech: 'sram', label: n > 1 ? `Cache die ${i}` : 'Cache die', fn: 'Extra SRAM cache (6T latches): still volatile, no refresh' }))];
+  if (pkg === 'pop') return [{ unit: 'package', kind: 'soc', tech: null, label: 'Processor package', fn: 'SoC die on its own substrate' },
+    { unit: 'package', kind: 'dram-pkg', tech: 'dram', label: 'DRAM package', fn: 'A separate DRAM package soldered on top (package-on-package)' }];
+  const nand = pkg === 'nand';
+  return times(n, (i) => ({ unit: 'die', kind: nand ? 'nand-die' : 'dram-die', tech: nand ? 'flash' : 'dram', label: `${nand ? 'NAND' : 'DRAM'} die ${i}`,
+    fn: nand ? 'Separate NAND die; each has its own 3D layers inside' : 'Separate DRAM die sharing one package' }));
+}
+
+// Bottom-up boxes between top..bottom (SVG y grows down). Exploded = wider gaps.
+export function stackLayout(n, exploded, top = 80, bottom = 380) {
+  const gap = exploded ? (n > 8 ? 6 : 14) : 2;
+  const h = Math.min(44, (bottom - top - gap * (n - 1)) / n);
+  return Array.from({ length: n }, (_, i) => ({ y: bottom - (i + 1) * h - i * gap, h }));
+}
+
 // Timer-driven stepper. Every pause/reset/cancel bumps a token so already-queued callbacks become no-ops.
 export function createClock({ advance, reset = () => {}, onChange = () => {}, interval = 700,
   schedule = (fn, ms) => setTimeout(fn, ms), clear = (id) => clearTimeout(id) }) {

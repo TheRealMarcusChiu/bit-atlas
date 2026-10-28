@@ -22,6 +22,9 @@ for (const [, ref] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
   if (!existsSync(join(root, ref))) fail.push(`missing local ref: ${ref}`);
 }
 if (/<(script|link)[^>]+(src|href)="https?:/.test(html)) fail.push('external runtime asset in index.html');
+const { VIEWS } = await import('../src/share.js');
+for (const v of VIEWS) if (!html.includes(`data-a="view" data-v="${v}"`)) fail.push(`nav button missing for view ${v}`);
+for (const id of ['copy', 'share', 'copied', 'notice']) if (!html.includes(`id="${id}"`)) fail.push(`missing #${id}`);
 
 for (const f of ['css/style.css', ...js.filter((f) => f.startsWith('src/'))]) {
   const s = read(f);

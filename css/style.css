@@ -54,6 +54,9 @@ summary:focus-visible { outline: 3px solid var(--cyan); }
 details ul { margin: 0; padding-left: 18px; font-size: 14px; color: #c9d8d8; }
 details li { margin: 4px 0; }
 a { color: var(--cyan); }
+#notice { margin: 0; padding: 8px 12px; border-left: 4px solid var(--amber); background: var(--panel); font-size: 15px; }
+.share { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#share { width: 100%; min-height: 44px; padding: 8px; background: var(--ink); color: var(--text); border: 1px solid var(--cyan); border-radius: 6px; font: 13px var(--mono); }
 .ns { padding: 20px; }
 
 /* SVG */
@@ -120,6 +123,14 @@ svg text { font-family: var(--sans); fill: var(--text); }
 .pulse { fill: var(--cyan); }
 .barn, .barr { fill: var(--cyan); opacity: .8; }
 .barr { fill: var(--amber); }
+.trap { stroke: var(--amber); stroke-width: 1.5; }
+.vc { fill: var(--panel); stroke: var(--dim); stroke-width: 2; }
+.vc.hi { fill: var(--amber); stroke: var(--text); }
+.bump { fill: var(--amber); }
+.bond { stroke: var(--amber); stroke-width: 1.5; fill: none; }
+.mold { fill: none; stroke: var(--dim); stroke-dasharray: 6 4; }
+.ball { fill: #8a9496; }
+.nop { pointer-events: none; }
 .flash { animation: blink .6s ease-out 2; }
 @keyframes blink { 50% { opacity: .35; } }
 

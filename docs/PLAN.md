@@ -7,6 +7,9 @@ Goal: one dark, diagram-first page that shows **how each memory cell stores 1 vs
 2. **Where it lives** — CPU caches, GPU caches, host DRAM, VRAM, SSD (controller, NAND, optional DRAM), firmware NOR. Role ≠ cell technology.
 3. **NAND vs NOR** — series string vs parallel cells, read current path, granularity.
 4. **GDDR vs HBM** — both DRAM as VRAM; flat packages vs stacked dies on an advanced package (TSV, wide bus).
+5. **3D stacking** — 3D NAND layers in one die · HBM dies + base die · bonded SRAM cache die · dies in a package / PoP. Linked from the other views where applicable.
+
+Share links: `src/share.js` validates a versioned snapshot (+ last whitelisted action, replayed locally) and readable params; see README.
 
 ## Architecture
 - `src/model.js` — pure, deterministic state model (cells, flash levels, place→tech map, NAND/NOR read path, clock with cancel tokens). No DOM.

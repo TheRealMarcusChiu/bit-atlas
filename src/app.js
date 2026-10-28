@@ -1,20 +1,15 @@
 import {
   makeCell, act, errText, FULL, SENSE, levelsFor, bitsAt, PLACES, techOf, readPath, createClock,
+  STACK_COUNTS, makeStack, stackParts, stackLayout,
 } from './model.js';
+import { snapOf, applySnap, readURL, shareURL } from './share.js';
 
 const $ = (s) => document.querySelector(s);
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const S = {
-  view: 'bit',
-  tech: 'sram',
-  cells: { sram: makeCell('sram'), dram: makeCell('dram'), flash: makeCell('flash') },
-  frames: null, fi: 0, before: null, bad: false,
-  msg: '',
-  place: 'cpu-l1',
-  bits: [1, 0, 1, 1, 0, 1, 0, 1], sel: 2,
-  vram: 'gddr', pulse: 0,
-};
+// Diagram state (view, tech, cells, place, bits, sel, vram, stack, bad) is filled from a URL snapshot by restore().
+// pre/last = snapshot before the last state-changing action + that action, so a link can replay it exactly.
+const S = { frames: null, fi: 0, before: null, msg: '', notice: '', pulse: 0, pre: null, last: null };
 
 /* ---------- clocks (all cancelled on mode change) ---------- */
 const opClock = createClock({
@@ -26,14 +21,15 @@ const opClock = createClock({
 const leakClock = createClock({
   interval: 900,
   advance: () => {
+    record('leak', 'step'); clearFrames();
     const prev = S.cells.dram.charge;
     S.cells.dram = act(S.cells.dram, 'leak').cell;
     const c = S.cells.dram.charge;
-    if (prev >= SENSE && c < SENSE) S.msg = 'Below threshold: a stored 1 now reads 0';
-    else if (prev > 0 && c === 0) S.msg = 'Fully leaked';
+    // Message depends only on prev/c, so a shared link can replay this tick exactly.
+    S.msg = c >= SENSE ? 'Leaking · still reads 1' : c > 0 ? 'Below threshold: a stored 1 now reads 0' : prev > 0 ? 'Fully leaked' : 'Empty: nothing to leak';
     return S.cells.dram.powered && c > 0;
   },
-  reset: () => { S.cells.dram = act(makeCell('dram'), 'write', 1).cell; S.msg = 'Reset: charged → 1'; },
+  reset: () => { clearFrames(); S.cells.dram = act(makeCell('dram'), 'write', 1).cell; S.msg = 'Reset: charged → 1'; },
   onChange: () => render(),
 });
 const busClock = createClock({
@@ -183,7 +179,35 @@ const ACTIONS = {
   },
   vram: (v) => { stopAll(); S.vram = v; S.pulse = 0; S.msg = v === 'gddr' ? 'GDDR: flat packages on the board' : 'HBM: stacked DRAM beside the GPU'; },
   bus: (v) => busClock[v](),
+  go3d: (v, arg) => { stopAll(); S.view = 'stack'; S.stack = makeStack(v, arg || S.stack.pkg); S.msg = stackMsg(); },
+  stk: (v) => { S.stack = { ...makeStack(v, S.stack.pkg), x: S.stack.x }; S.msg = stackMsg(); },
+  stkk: (v) => { S.stack = { ...S.stack, pkg: v, sel: 0 }; S.msg = stackMsg(); },
+  stkn: (v) => {
+    const st = { ...S.stack, n: Number(v) };
+    st.sel = Math.min(st.sel, stackParts(st).length - 1); S.stack = st;
+    S.msg = `${v} ${COUNT_NAME[st.type].toLowerCase()} · illustrative count`;
+  },
+  stks: (v) => {
+    S.stack = { ...S.stack, sel: Number(v) }; const p = stackParts(S.stack)[S.stack.sel];
+    S.msg = p.kind === 'wl' ? `Word line ${S.stack.sel + 1}: selects cell ${S.stack.sel + 1} on each channel` : `${p.label} selected`;
+  },
+  stkx: (v) => { S.stack = { ...S.stack, x: v === '1' }; S.msg = v === '1' ? 'Exploded: parts pulled apart' : 'Compact: parts touching'; },
+  jump: (v) => {
+    if (v === 'hbm') { ACTIONS.view('vram'); ACTIONS.vram('hbm'); return; }
+    if (v === 'l3') { ACTIONS.view('where'); ACTIONS.place('cpu-l3'); return; }
+    ACTIONS.view('bit'); ACTIONS.tech(v === 'nand' ? 'flash' : v);
+    if (v === 'nand' && S.cells.flash.topo !== 'nand') S.cells.flash = makeCell('flash', { topo: 'nand' });
+  },
 };
+
+// Every state change except pure playback (frame/bus position, play/pause) is recorded for replay.
+const passive = (a, v) => a === 'anim' || a === 'bus' || (a === 'leak' && (v === 'play' || v === 'pause'));
+function record(a, v, arg) { S.pre = snapOf(S); S.last = arg === undefined ? [a, v] : [a, v, arg]; }
+function dispatch(a, v, arg) {
+  if (!Object.hasOwn(ACTIONS, a)) return;
+  if (!passive(a, v)) record(a, v, arg);
+  if (a === 'view' && arg) { ACTIONS.view(v); ACTIONS.tech(arg); } else ACTIONS[a](v, arg);
+}
 
 const techName = (p) => (p.tech === 'flash' ? `${p.topo.toUpperCase()} flash` : p.tech.toUpperCase()) + ' cells';
 function techMsg() {
@@ -196,7 +220,16 @@ const VIEW_MSG = {
   where: () => 'Pick a part: same role ≠ same cell',
   topo: () => 'Same cells, different wiring',
   vram: () => 'VRAM is a role · GDDR and HBM are both DRAM',
+  stack: () => stackMsg(),
 };
+const COUNT_NAME = { nand: 'Layers', hbm: 'DRAM dies', cache: 'Cache dies', pkg: 'Dies' };
+function stackMsg() {
+  const { type, pkg } = S.stack;
+  if (type === 'nand') return '3D NAND: word-line layers inside one die';
+  if (type === 'hbm') return 'HBM: separate DRAM dies stacked with TSVs';
+  if (type === 'cache') return '3D cache: SRAM die bonded to a compute die';
+  return pkg === 'pop' ? 'PoP: DRAM package on a processor package' : `Package: separate ${pkg.toUpperCase()} dies in one package`;
+}
 
 /* ---------- SVG helpers ---------- */
 const tx = (x, y, s, cls = 'lbl', a = '') => `<text x="${x}" y="${y}" class="${cls}" ${a}>${s}</text>`;
@@ -440,6 +473,72 @@ function svgVram() {
   return { vb: '0 0 420 505', s, title: g ? 'GDDR: separate DRAM packages around the GPU' : 'HBM: stacked DRAM dies on an advanced package beside the GPU' };
 }
 
+function svgStack() {
+  const st = S.stack; const parts = stackParts(st); const sel = st.sel;
+  const nand = st.type === 'nand';
+  const L = stackLayout(parts.length, st.x, nand ? 124 : st.type === 'pkg' ? 100 : 80); // room for top labels
+  const top = L[L.length - 1].y; const mid = (i) => L[i].y + L[i].h / 2;
+  const pick = (i, inner) => `<g class="place ${i === sel ? 'sel' : ''}" data-a="stks" data-v="${i}">${inner}</g>`;
+  const box = (i, x, w, label = '') => pick(i, rc(x, L[i].y, w, L[i].h, 'pbox')
+    + (label && L[i].h >= 16 ? tx(x + w / 2, mid(i) + 5, label, 'lbl small', 'text-anchor="middle"') : ''));
+  const nop = (inner) => `<g class="nop">${inner}</g>`;
+  let s = DEFS; let head; let foot;
+  if (nand) {
+    head = '3D NAND · inside one die'; foot = 'layers = cells in one string';
+    const PX = [100, 165, 230];
+    s += rc(28, top - 40, 274, 444 - top, 'die') + tx(36, top - 22, 'one die', 'lbl dim small');
+    parts.forEach((_, i) => { s += box(i, 40, 250); });
+    let o = ln(40, top - 12, 290, top - 12, 'wire thick') + rc(40, 384, 250, 12, 'well');
+    PX.forEach((x, j) => {
+      o += ln(x, top - 12, x, 384, j === 1 ? 'chan on thick' : 'chan thick') + ln(x - 7, top - 2, x - 7, 384, 'trap') + ln(x + 7, top - 2, x + 7, 384, 'trap');
+      o += `<circle cx="${x}" cy="${mid(sel)}" r="${Math.min(8, L[sel].h / 2 + 1)}" class="vc ${j === 1 ? 'hi' : ''}"/>`;
+    });
+    s += nop(o) + tx(165, top - 20, 'channel', 'lbl on small', 'text-anchor="middle"');
+    s += tx(296, top - 8, 'bit line', 'lbl dim small') + tx(296, 395, 'source', 'lbl dim small');
+    s += arrow(330, mid(sel), 296, mid(sel)) + tx(336, mid(sel) + 5, `WL ${sel + 1}`, 'lbl on mono');
+    s += tx(36, 418, 'amber = charge-trap layer', 'lbl amber small');
+  } else if (st.type === 'hbm') {
+    head = 'HBM · stacked DRAM dies'; foot = 'dies = separate DRAM chips';
+    s += rc(20, 380, 380, 18, 'interp') + rc(10, 398, 400, 12, 'board');
+    parts.forEach((p, i) => { s += box(i, 40, 160, i ? `DRAM ${i}` : 'base die'); });
+    let o = '';
+    for (const x of [52, 68, 172, 188]) {
+      o += ln(x, top + 4, x, 380, 'tsv');
+      if (st.x) for (let i = 1; i < L.length; i++) o += `<circle cx="${x}" cy="${L[i].y + L[i].h + (L[i - 1].y - L[i].y - L[i].h) / 2}" r="3" class="bump"/>`;
+    }
+    for (let k = 0; k < 6; k++) o += ln(200, 383 + k * 2.4, 280, 383 + k * 2.4, 'trace thin');
+    s += nop(o) + tx(206, top + 16, 'TSVs', 'lbl on small') + (st.x ? tx(206, top + 36, 'microbumps', 'lbl amber small') : '');
+    s += rc(280, 320, 110, 60, 'gpu') + tx(335, 356, 'GPU', 'lbl head', 'text-anchor="middle"');
+    s += tx(24, 428, 'interposer', 'lbl dim small') + tx(240, 428, 'short, wide link', 'lbl on small', 'text-anchor="middle"');
+  } else if (st.type === 'cache') {
+    head = '3D SRAM cache · bonded dies'; foot = 'still 6T SRAM · volatile · no refresh';
+    parts.forEach((p, i) => { s += i ? box(i, 80, 180, 'SRAM cache die') : box(i, 40, 260, 'compute die'); });
+    let o = '';
+    for (let i = 1; i < L.length; i++) for (let x = 90; x <= 250; x += 10) o += ln(x, L[i].y + L[i].h - 4, x, L[i - 1].y + 4, 'bond');
+    s += nop(o) + tx(306, L[0].y + 5, 'bond', 'lbl amber small');
+    s += rc(20, 380, 380, 14, 'board') + tx(24, 428, 'package substrate', 'lbl dim small');
+  } else if (st.pkg === 'pop') {
+    head = 'Package-on-package (PoP)'; foot = 'two packages, not one die stack';
+    s += pick(0, rc(40, L[0].y, 340, L[0].h, 'pbox'));
+    s += pick(1, rc(40, L[1].y, 340, L[1].h - 12, 'pbox') + tx(210, L[1].y + L[1].h / 2 - 1, 'DRAM package', 'lbl small', 'text-anchor="middle"'));
+    let o = rc(40, L[0].y + L[0].h - 10, 340, 10, 'board') + rc(130, L[0].y + 6, 160, L[0].h - 20, 'gpu')
+      + tx(210, L[0].y + L[0].h / 2 + 2, 'SoC die', 'lbl small', 'text-anchor="middle"');
+    for (let x = 56; x <= 364; x += 28) o += `<circle cx="${x}" cy="${L[1].y + L[1].h - 6}" r="5" class="ball"/>`;
+    s += nop(o) + tx(24, 428, 'solder balls join the packages', 'lbl dim small');
+  } else {
+    const k = st.pkg.toUpperCase();
+    head = `Package · stacked ${k} dies`; foot = st.pkg === 'nand' ? 'package dies ≠ 3D NAND layers' : 'not every DRAM package stacks dies';
+    s += rc(24, top - 14, 372, 394 - top, 'mold') + tx(30, top - 22, 'one package', 'lbl dim small');
+    parts.forEach((_, i) => { s += box(i, 70 + i * 10, 230, `${k} die ${i + 1}`); });
+    let o = '';
+    parts.forEach((_, i) => { const x = 70 + i * 10; o += `<path d="M${x + 5} ${L[i].y + 5} Q ${36 + i * 3} ${L[i].y + 5} ${36 + i * 3} 380" class="bond"/>`; });
+    s += nop(o) + rc(20, 380, 380, 14, 'board') + tx(24, 428, 'wire bonds → substrate', 'lbl amber small');
+  }
+  s += tx(14, 28, head, 'lbl head') + tx(14, 54, `Selected: ${parts[sel].label}`, 'lbl on');
+  s += tx(210, 450, foot, 'lbl', 'text-anchor="middle"') + tx(210, 470, 'schematic · not to scale · counts illustrative', 'lbl dim small', 'text-anchor="middle"');
+  return { vb: '0 0 420 480', s, title: `${head}, ${parts[sel].label} selected` };
+}
+
 /* ---------- controls ---------- */
 const btn = (a, v, label, { on = false, cls = '', arg, dis = false } = {}) =>
   `<button type="button" class="b ${cls}" data-a="${a}" data-v="${v}"${arg !== undefined ? ` data-arg="${arg}"` : ''}${
@@ -470,6 +569,8 @@ function controlsBit() {
     if (t === 'dram') h += animRow('leak', leakClock);
   }
   if (S.frames && S.frames.length > 1) h += animRow('anim', opClock);
+  const go = t === 'sram' ? ['cache', 'Stacked SRAM cache →'] : t === 'dram' ? ['hbm', 'Stacked DRAM (HBM) →'] : c.topo === 'nand' ? ['nand', '3D NAND layers →'] : null;
+  if (go) h += row('Go', act1('go3d', go[0], go[1]));
   return h;
 }
 
@@ -482,9 +583,15 @@ function controlsWhere() {
   let h = GROUPS.map(([g, ids]) => row(g, ids.map((id) => btn('place', id, SHORT[id], { on: S.place === id })).join(''))).join('');
   h += `<div class="card"><svg viewBox="0 0 120 70" class="mini" aria-hidden="true">${mini(p.tech)}</svg><div>
     <p class="k">Role</p><p>${p.role}</p><p class="k">Cell</p><p class="on">${techName(p)}</p></div></div>`;
-  h += row('Go', act1('open', 'x', 'Open bit cell →'));
+  const g = W3D[S.place];
+  h += row('Go', act1('open', 'x', 'Open bit cell →') + (g ? act1('go3d', g[0], g[2], { arg: g[1] }) : ''));
   return h;
 }
+// Only where a 3D example applies; wording stays conditional.
+const W3D = {
+  'cpu-l3': ['cache', undefined, 'Some CPUs stack extra L3 →'], vram: ['hbm', undefined, 'If HBM: stacked DRAM →'],
+  'host-dram': ['pkg', 'dram', 'Some packages stack dies →'], 'ssd-nand': ['nand', undefined, '3D NAND layers →'],
+};
 function mini(t) {
   if (t === 'sram') return '<path d="M70 15 L70 35 L44 25Z" class="inv"/><path d="M50 37 L50 57 L76 47Z" class="inv"/><polyline points="70,25 90,25 90,47 76,47" class="wire"/><polyline points="44,25 30,25 30,47 50,47" class="wire"/>';
   if (t === 'dram') return `${ln(10, 40, 50, 40)}${ln(30, 30, 30, 15, 'wire')}${rc(60, 15, 40, 45, 'bucket')}${rc(62, 32, 36, 26, 'charge')}`;
@@ -495,11 +602,31 @@ function controlsTopo() {
   let h = row('Cell', S.bits.map((b, i) => btn('sel', i, String(i), { on: S.sel === i, cls: 'mono sq' })).join(''));
   h += row('Do', act1('arr', 'read', 'Read') + act1('arr', 'program', 'Program 0') + act1('arr', 'program1', 'Write 1') + act1('arr', 'erase', 'Erase all'));
   if (S.frames && S.frames.length > 1) h += animRow('anim', opClock);
-  return h;
+  return h + row('Go', act1('go3d', 'nand', '3D NAND string →'));
 }
 function controlsVram() {
   return row('Type', btn('vram', 'gddr', 'GDDR', { on: S.vram === 'gddr' }) + btn('vram', 'hbm', 'HBM', { on: S.vram === 'hbm' }))
-    + animRow('bus', busClock) + row('Go', act1('view', 'bit', 'DRAM cell →', { arg: 'dram' }));
+    + animRow('bus', busClock) + row('Go', act1('view', 'bit', 'DRAM cell →', { arg: 'dram' })
+    + (S.vram === 'hbm' ? act1('go3d', 'hbm', 'Explore the stack →') : ''));
+}
+
+const UNIT = { layer: 'Layer inside one die', die: 'Separate die', package: 'Separate package' };
+const shortName = (p) => { const w = p.label.split(' '); return /^\d+$/.test(w.at(-1)) ? w.at(-1) : w[0]; };
+function controlsStack() {
+  const st = S.stack; const parts = stackParts(st); const p = parts[st.sel];
+  let h = row('Stack', [['nand', '3D NAND'], ['hbm', 'HBM'], ['cache', '3D cache'], ['pkg', 'Package']].map(([k, l]) => btn('stk', k, l, { on: st.type === k })).join(''));
+  if (st.type === 'pkg') h += row('Inside', [['nand', 'NAND dies'], ['dram', 'DRAM dies'], ['pop', 'PoP']].map(([k, l]) => btn('stkk', k, l, { on: st.pkg === k })).join(''));
+  if (!(st.type === 'pkg' && st.pkg === 'pop')) h += row(COUNT_NAME[st.type], STACK_COUNTS[st.type].map((c) => btn('stkn', c, String(c), { on: st.n === c, cls: 'mono' })).join(''));
+  h += row('Select', parts.map((q, i) => btn('stks', i, shortName(q), { on: st.sel === i, cls: 'mono sq' })).join(''));
+  h += row('View', btn('stkx', 0, 'Compact', { on: !st.x }) + btn('stkx', 1, 'Exploded', { on: st.x }));
+  h += `<div class="card"><div><p class="k">${UNIT[p.unit]}</p><p class="on">${p.label}</p><p>${p.fn}</p></div></div>`;
+  const go = {
+    nand: act1('jump', 'nand', 'Flash cell →') + act1('view', 'topo', 'NAND vs NOR →'),
+    hbm: act1('jump', 'dram', 'DRAM cell →') + act1('jump', 'hbm', 'GDDR vs HBM →'),
+    cache: act1('jump', 'sram', 'SRAM cell →') + act1('jump', 'l3', 'Where it lives →'),
+    pkg: st.pkg === 'nand' ? act1('stk', 'nand', 'Inside a die: 3D NAND →') : act1('jump', 'dram', 'DRAM cell →'),
+  }[st.type];
+  return h + row('Go', go);
 }
 
 const NOTES = {
@@ -511,11 +638,49 @@ const NOTES = {
   where: () => ['Cache levels are positions in a hierarchy, not cell species. Typical caches use SRAM.', 'L0 and extra LLC are architecture-specific (dashed). Not every chip has L0–L3; L0 names different things (e.g. NVIDIA Turing: L0 instruction cache, separate from registers).', 'GPU L1 often shares SRAM with scratchpad ("shared memory"). Generic map, not one product.', 'SSD = NAND + controller (ECC, wear leveling, bad blocks). Onboard DRAM optional: DRAM-less designs exist, some using host memory (HMB).', 'NOR usually holds firmware, not bulk SSD data.', 'Sizes and latencies vary; none implied.'],
   topo: () => ['Same trapped-charge cell, different wiring.', 'NAND: cells in series; unselected ones get a pass voltage, so one read current crosses the whole string. Dense; reads/programs by page, erases by block.', 'NOR: cells in parallel on the bitline; random byte/word reads, execute-in-place. Larger per bit; erases by sector.', 'Cell wiring ≠ external bus: "serial NOR" is an interface. SSDs still serve random reads via the controller.', 'Neither replaces SRAM caches: flash writes slowly and wears out.'],
   vram: () => ['VRAM = GPU memory role (historically also a dual-ported video RAM chip). GDDR and HBM are both DRAM (1T1C cells, refresh, volatile).', 'GDDR: separate packages on the board; fewer, faster-signaling pins per device.', 'HBM: DRAM dies stacked with TSVs on a base die, beside the GPU on an interposer or bridge; very wide, short interface.', 'HBM is also used outside graphics. Near the GPU ≠ cache: it is still DRAM.', 'Lane counts, die counts and pulse speeds here are illustrative; no latency or bandwidth claim.'],
+  stack: () => [...{
+    nand: ['One die: word-line layers are stacked and vertical channels run through them. Each crossing is one cell of a series NAND string.', 'Many 3D NAND designs use a charge-trap layer around the channel; others use floating gates. Same Vt idea.', 'More layers = more cells per string inside one die, not more dies. Stacking whole dies in a package is separate (see Package).', 'NOR flash is wired in parallel; this vertical-string picture is NAND-specific.', 'Taller stacks add process complexity (KIOXIA). Layer counts here are illustrative, not product numbers.'],
+    hbm: ['HBM stacks separate DRAM dies. TSVs and microbumps connect them vertically.', 'A base (logic) die sits under the DRAM dies in many stacks; Micron calls it optional.', 'The stack sits beside the processor on an interposer or bridge: a short, very wide link.', 'Each die is ordinary DRAM: 1T1C cells, refresh, volatile. Stacking changes packaging, not the cell.', 'No bandwidth or capacity is implied by the die count.'],
+    cache: ['Some processors bond an extra SRAM cache die to the compute die (e.g. AMD 3D V-Cache adds L3).', 'Above or below the compute die depends on the design; dense vertical links (e.g. hybrid bonding) join them.', 'The cells are still 6T SRAM: volatile, no refresh. Not DRAM, not NAND layers.', 'Most CPU and GPU caches are not stacked; this is architecture-specific.'],
+    pkg: ['Many NAND and some DRAM packages hold several separate dies stacked in one package, joined by wire bonds (or TSVs).', 'Each NAND die can itself be 3D NAND: package dies ≠ word-line layers.', 'Not every DRAM or GDDR part stacks dies.', 'Package-on-package (PoP): a DRAM package soldered on top of a processor package, common in phones. Two packages, not one die stack.'],
+  }[S.stack.type], 'Schematic, not to scale. Counts are illustrative choices.'],
 };
 
 /* ---------- render ---------- */
-const RENDER = { bit: () => ({ sram: svgSram, dram: svgDram, flash: svgFlash })[S.tech](), where: svgWhere, topo: svgTopo, vram: svgVram };
-const CONTROLS = { bit: controlsBit, where: controlsWhere, topo: controlsTopo, vram: controlsVram };
+const RENDER = { bit: () => ({ sram: svgSram, dram: svgDram, flash: svgFlash })[S.tech](), where: svgWhere, topo: svgTopo, vram: svgVram, stack: svgStack };
+const CONTROLS = { bit: controlsBit, where: controlsWhere, topo: controlsTopo, vram: controlsVram, stack: controlsStack };
+
+/* ---------- shareable URL ---------- */
+let syncOn = false; let restoring = false;
+const payload = () => ({ snap: S.pre ?? snapOf(S), last: S.last, fi: S.frames ? S.fi : 0, pulse: S.pulse });
+const link = () => shareURL(location.href, payload(), S.view);
+function syncURL() {
+  if (!syncOn || restoring) return;
+  const href = link();
+  // shortcut: browsers rate-limit replaceState; a dropped call only leaves the bar one tick stale, Copy link is always exact.
+  if (href !== location.href) try { history.replaceState(history.state, '', href); } catch { /* ignore */ }
+}
+// Replays the recorded action on its pre-state, then pins frame/bus position. Never autoplays.
+function restore(search) {
+  restoring = true;
+  clocks.forEach((c) => c.cancel());
+  const r = readURL(search);
+  applySnap(S, r.snap);
+  Object.assign(S, { frames: null, before: null, fi: 0, pulse: 0, pre: null, last: null });
+  S.msg = VIEW_MSG[S.view]();
+  let notice = r.notice;
+  if (r.last) dispatch(...r.last);
+  clocks.forEach((c) => c.cancel());
+  if (S.frames) {
+    if (r.fi < S.frames.length) S.fi = r.fi;
+    else { S.fi = S.frames.length - 1; notice ||= 'That frame does not exist; showing the last step.'; }
+  } else if (r.fi && !notice) notice = 'No animation at that step; showing the result.';
+  S.pulse = r.pulse;
+  S.notice = notice;
+  restoring = false;
+  syncOn = r.given;
+  render();
+}
 
 function render() {
   const focus = document.activeElement?.dataset?.a ? `[data-a="${document.activeElement.dataset.a}"][data-v="${document.activeElement.dataset.v}"]` : null;
@@ -533,21 +698,37 @@ function render() {
   const f = frame();
   $('#phase').textContent = f ? `${S.fi + 1}/${S.frames.length} · ${f.t}` : '';
   $('#notes').innerHTML = NOTES[S.view]().map((n) => `<li>${n}</li>`).join('');
+  $('#notice').hidden = !S.notice;
+  $('#notice').textContent = S.notice;
   if (focus) {
     const all = [...document.querySelectorAll(`#controls ${focus}, nav ${focus}`)];
     (all.find((e) => e.dataset.arg === focusArg) || all[0])?.focus();
   }
+  syncURL();
 }
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-a]');
   if (!el || el.disabled) return;
   const { a, v, arg } = el.dataset;
-  if (a === 'view' && arg) { ACTIONS.view(v); ACTIONS.tech(arg); } else ACTIONS[a](v, arg);
+  S.notice = ''; $('#copied').textContent = ''; syncOn = true;
+  dispatch(a, v, arg);
   render();
 });
 
-S.cells.sram = act(S.cells.sram, 'write', 1).cell;
-S.cells.dram = act(S.cells.dram, 'write', 1).cell;
-S.msg = techMsg();
-render();
+$('#copy').addEventListener('click', async () => {
+  syncOn = true; syncURL();
+  const href = link();
+  const box = $('#share');
+  box.value = href;
+  try {
+    await navigator.clipboard.writeText(href);
+    box.hidden = true; $('#copied').textContent = 'Link copied';
+  } catch {
+    box.hidden = false; box.focus(); box.select();
+    $('#copied').textContent = 'Copy blocked: the link is selected below, copy it manually';
+  }
+});
+addEventListener('popstate', () => restore(location.search));
+
+restore(location.search);
